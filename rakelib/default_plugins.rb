@@ -40,7 +40,6 @@ module LogStash
       logstash-filter-ruby
       logstash-filter-sleep
       logstash-filter-split
-      logstash-filter-syslog_pri
       logstash-filter-throttle
       logstash-filter-urldecode
       logstash-filter-useragent
@@ -66,11 +65,7 @@ module LogStash
       logstash-input-s3
       logstash-input-snmptrap
       logstash-input-sqs
-      logstash-input-stdin
-      logstash-input-syslog
-      logstash-input-tcp
       logstash-input-twitter
-      logstash-input-udp
       logstash-input-unix
       logstash-input-xmpp
       logstash-input-zeromq

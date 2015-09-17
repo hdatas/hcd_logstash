@@ -3,6 +3,7 @@ require "logstash/namespace"
 require "logstash/event"
 require "logstash/plugin"
 require "logstash/logging"
+require "logstash/stats"
 
 # This is the base class for logstash codecs.
 module LogStash::Codecs; class Base < LogStash::Plugin

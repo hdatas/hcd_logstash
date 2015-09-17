@@ -27,6 +27,10 @@ class LogStash::Agent < Clamp::Command
     I18n.t("logstash.agent.flag.watchdog-timeout"),
     :default => 10, &:to_f
 
+  option ["-s", "--stat_server_port"], "PORT",
+    I18n.t("logstash.agent.stat_server_port"),
+    :default => 8246, :attribute_name => :stat_server_port
+
   option ["-l", "--log"], "FILE",
     I18n.t("logstash.agent.flag.log"),
     :attribute_name => :log_file
@@ -115,6 +119,7 @@ class LogStash::Agent < Clamp::Command
     end
 
     begin
+      Stats.instance.start_stats_server(@stat_server_port)
       pipeline = LogStash::Pipeline.new(@config_string)
     rescue LoadError => e
       fail("Configuration problem.")

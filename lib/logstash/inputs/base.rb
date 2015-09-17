@@ -6,6 +6,7 @@ require "logstash/logging"
 require "logstash/config/mixin"
 require "logstash/codecs/base"
 require "logstash/util/decorators"
+require "logstash/stats"
 
 # This is the base class for Logstash inputs.
 class LogStash::Inputs::Base < LogStash::Plugin

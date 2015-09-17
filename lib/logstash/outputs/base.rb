@@ -6,6 +6,7 @@ require "logstash/plugin"
 require "logstash/namespace"
 require "logstash/config/mixin"
 require "uri"
+require "logstash/stats"
 
 class LogStash::Outputs::Base < LogStash::Plugin
   include LogStash::Config::Mixin

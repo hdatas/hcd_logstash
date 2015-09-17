@@ -5,6 +5,7 @@ require "logstash/logging"
 require "logstash/plugin"
 require "logstash/config/mixin"
 require "logstash/util/decorators"
+require "logstash/stats"
 
 class LogStash::Filters::Base < LogStash::Plugin
   include LogStash::Config::Mixin
