@@ -115,6 +115,11 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
   end
 
   private
+  def inc_corrupted_event()
+    @stats_store.inc("output/#{self.class.config_name}", "corrupted_events")
+  end
+
+  private
   def get_remote_bucket_key(local_file)
     basefile_name = File.basename(local_file)
     relative_path = Pathname.new(local_file).relative_path_from(Pathname.new(@local_file_path))
@@ -285,7 +290,12 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
     msg = event.sprintf("%{message}")
 
     if @partition_fields
-      partitions = get_partitions(msg)
+      begin
+        partitions = get_partitions(msg)
+      rescue => e
+        inc_corrupted_event()
+        partitions = [""]
+      end
     else
       partitions = [""]
     end
