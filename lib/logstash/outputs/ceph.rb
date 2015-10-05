@@ -27,9 +27,20 @@ require 'pathname'
 # [source,ruby]
 # output {
 #    ceph {
-#      temporary_path => "/tmp/logstash"        (optional)
-#      max_items => 50                          (optional)
-#      retry_interval => 5                      (optional)
+#      local_file_path => "/tmp/logstash"         (optional)
+#      max_file_size_mb => 4                      (optional)
+#      max_mem_mb => 40                           (optional)
+#      max_disk_mb => 400                         (optional)
+#      seconds_before_new_file => 300             (optional)
+#      flush_worker_num => 5                      (optional)
+#      upload_worker_num => 5                     (optional)
+#      retry_interval => 5                        (optional)
+#      partition_fields => []                     (optional)
+#
+#      bucket => "data"                           (required)
+#      endpoint => ""                             (required)
+#      access_key_id => ""                        (required)
+#      secret_access_key => ""                    (required)
 #    }
 #
 class LogStash::Outputs::Ceph < LogStash::Outputs::Base
@@ -73,9 +84,6 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
 
   # Set the file suffix. 
   config :file_suffix, :validate => :string, :default => "txt"
-
-  # Set the root bucket to upload data.
-  config :upload_root_bucket, :validate => :string, :default=> "data"
 
   # Partition the data before uploading.
   config :partition_fields, :validate => :array, :default=> []
