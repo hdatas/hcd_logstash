@@ -28,9 +28,9 @@ require 'pathname'
 # output {
 #    ceph {
 #      local_file_path => "/tmp/logstash"         (optional)
-#      max_file_size_mb => 4                      (optional)
-#      max_mem_mb => 40                           (optional)
-#      max_disk_mb => 400                         (optional)
+#      max_file_size_mb => 40                     (optional)
+#      max_mem_mb => 80                           (optional)
+#      max_disk_mb => 800                         (optional)
 #      seconds_before_new_file => 300             (optional)
 #      flush_worker_num => 5                      (optional)
 #      upload_worker_num => 5                     (optional)
@@ -54,19 +54,19 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
 
   # If this setting is omitted, the full json representation of the
   # event will be written as a single line.
-  config :message_format, :validate => :string, :default => "%{message}"
+  config :message_format, :validate => :string, :default => ""
 
   # Set the size per file.
-  config :max_file_size_mb, :validate => :number, :default => 4
+  config :max_file_size_mb, :validate => :number, :default => 40
 
   # Force flush data from memory to disk if 
   # 1. total in-memory data reached max_mem_mb And
   # 2. total data size on disk hasn't reached the max_disk_mb.
   # Set the total in-memory data size. 
-  config :max_mem_mb, :valiadte => :number, :default => 40
+  config :max_mem_mb, :valiadte => :number, :default => 80
 
   # Set the total on disk data size.
-  config :max_disk_mb, :valiadte => :number, :default => 400
+  config :max_disk_mb, :valiadte => :number, :default => 800
 
   # Set the number of seconds before flushing a new file.
   # Flush is always done in bucket.
@@ -82,13 +82,25 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
   # Set the time in seconds for retrying the ceph store open
   config :retry_interval, :validate => :number, :default => 5
 
+  config :column_selector, :validate => :array, :default => []
+
+  config :column_delimiter, :validate => :string, :default => "\001"
+
   # Set the file suffix. 
-  config :file_suffix, :validate => :string, :default => "txt"
+  config :file_suffix, :validate => :string, :required => false
+
+  config :file_format, :validate => :string, :default => "textfile"
 
   # Partition the data before uploading.
   config :partition_fields, :validate => :array, :default=> []
 
   config :bucket, :validate => :string, :required => true
+
+  config :hive_home, :validate => :string, :required => false
+  
+  config :hdfs_home, :validate => :string, :required => false
+  
+  config :hadoop_common_home, :validate => :string, :required => false
 
   #######################################
   # for aws s3, use Aws Sdk for ruby v2
@@ -157,6 +169,16 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
 
   ########################################
 
+  private
+  def add_require_jars(search_root)
+    cwd = Dir.pwd
+    Dir.chdir(search_root) # multi-threaded program may throw an error
+    Dir.glob(File.join(search_root, "**", "*.jar")).each do |file_name|
+      require "#{file_name}"
+    end
+    Dir.chdir(cwd)
+  end
+
   # initialize the output
   public
   def register
@@ -164,7 +186,20 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
 
     @s3 = aws_s3_config
 
-    create_bucket(@bucket)
+    if @hdfs_home
+      add_require_jars(@hdfs_home)
+    end
+
+    if @hadoop_common_home
+      add_require_jars(@hadoop_common_home)
+    end
+
+    if @hive_home
+      add_require_jars(@hive_home)
+      require "logstash/outputs/hadoop_rcfile"
+    end
+
+#    create_bucket(@bucket)
 
     @shutdown = false
     # Queue of queue of events to flush to disk.
@@ -189,6 +224,10 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
 
     @local_file_path = File.expand_path(@local_file_path)
     @stats_store = Stats.instance
+    if @column_selector.empty? and @file_format != "textfile"
+      @logger.error("Column selector must be specified for non text file")
+      teardown(true)
+    end
     add_existing_disk_files()
 
     # Move event queues to to_flush_queue 
@@ -255,7 +294,7 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
             if event_queue.seconds_since_first_event > @seconds_before_new_file || event_queue.total_size >= @max_file_size
               @to_flush_queue << event_queue
               @part_to_events.delete(part)
-              @logger.info("moved one queue to to_flush_queu", :part => part)
+              @logger.info("moved one queue to to_flush_queue", :part => part)
             end
           end
         }
@@ -295,7 +334,7 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
     inc_receive_stat()
 
     # use json format to calculate partitions and event size.
-    msg = event.sprintf("%{message}")
+    msg = to_json_message(event)
 
     if @partition_fields
       begin
@@ -385,15 +424,15 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
   def upload_worker()
     @logger.info("Starting one upload worker thread.")
     while !@shutdown
-      file = @file_queue.deq
+      file_name = @file_queue.deq
 
-      case file
+      case file_name
         when LogStash::ShutdownEvent
           @logger.debug("Ceph: upload worker is shutting down gracefuly")
           break
         else
-          @logger.debug("Ceph: upload working is uploading a new file", :file => file)
-          move_file_to_bucket(file)
+          @logger.debug("Ceph: upload worker is uploading a new file", :file => file_name)
+          move_file_to_bucket(file_name)
       end
     end
   end
@@ -401,10 +440,12 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
   # flush the local files to ceph storage
   # if success, delete the local file, otherwise, retry
   private
-  def move_file_to_bucket(file)
+  def move_file_to_bucket(file_name)
     begin
-      if !File.zero?(file)
-        upload_file(file)
+      if !File.zero?(file_name)
+        upload_file(file_name)
+      else
+        @logger.debug("skipping file as its empty.",  :file => file_name)
       end
     rescue => e
       @logger.warn("Failed to upload the chunk file to ceph. Retry after #{@retry_interval} seconds.", :exception => e)
@@ -413,7 +454,7 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
     end
 
     begin
-      File.delete(file)
+      File.delete(file_name)
     rescue Errno::ENOENT
       # Something else deleted the file, logging but not raising the issue
       @logger.warn("Ceph: Cannot delete the file since it doesn't exist on disk", :filename => File.basename(file))
@@ -427,11 +468,24 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
     events = event_q.event_queue
     create_ts = event_q.begin_ts
     filename = create_temporary_file(dir, create_ts)
+    @logger.debug("Ceph: put events into tempfile ", :file => filename)
+    if @file_format == "textfile"
+      write_text_file(events, filename)
+    elsif @file_format == "rcfile"
+      write_rcfile(events, filename)
+    else
+      @logger.error("Non supported file format: #{@file_format}!")
+      teardown(true)
+    end
+    return filename
+  end
+
+  private
+  def write_text_file(events, filename)
     fd = File.open(filename, "w")
     begin
-      @logger.debug("Ceph: put events into tempfile ", :file => fd.path)
       while ! events.empty?
-        fd.syswrite(format_message(events.pop(non_block = true)))
+        fd.puts(select_columns(events.pop(non_block = true)).join(@column_delimiter))
       end
     rescue Errno::ENOSPC
       @logger.error("Ceph: No space left in temporary directory", :local_file_path => @local_file_path)
@@ -439,22 +493,58 @@ class LogStash::Outputs::Ceph < LogStash::Outputs::Base
     ensure
       fd.close
     end
-    return fd.path
+  end
+
+  private
+  def write_rcfile(events, filename)
+    writer = nil
+    begin
+      writer = HadoopRCFile.new(filename, @column_selector.size())
+      while ! events.empty?
+        writer.write(select_columns(events.pop(non_block = true)))
+      end
+    rescue Errno::ENOSPC
+      @logger.error("Ceph: No space left in temporary directory", :local_file_path => @local_file_path)
+      teardown(true)
+    ensure
+      if writer
+        writer.close()
+      end
+    end
+  end
+
+  private
+  def select_columns(event)
+    json_message = to_json_message(event)
+    if @column_selector.empty?
+      return [json_message]
+    end
+    
+    json_event = JSON.parse(json_message)
+    col = []
+    @column_selector.each do |select|
+      col << json_event[select]
+    end
+    return col
   end
 
   # format the output message
   private
-  def format_message(event)
-    if @message_format
-      event.sprintf(@message_format)
-    else
+  def to_json_message(event)
+    if @message_format.empty?
       event.to_json
+    else
+      event.sprintf(@message_format)
     end
   end
 
   private
   def create_temporary_file(dir, ts)
-    filename = File.join(dir, "#{ts.strftime("%Y-%m-%dT%H.%M")}_#{SecureRandom.uuid}.#{@file_suffix}")
+    filename = File.join(dir, "#{ts.strftime("%Y-%m-%dT%H.%M")}_#{SecureRandom.uuid}")
+    if @file_suffix and not @file_suffix.empty?
+      filename = filename + ".#{@file_suffix}"
+    end
+
     @logger.info("Opening file", :path => filename)
 
     return filename
